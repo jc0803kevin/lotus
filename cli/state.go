@@ -66,11 +66,11 @@ var stateCmd = &cli.Command{
 		stateListMessagesCmd,
 		stateComputeStateCmd,
 		stateCallCmd,
-		stateGetDealSetCmd,
 		stateWaitMsgCmd,
 		stateSearchMsgCmd,
 		stateMinerInfo,
 		stateMarketCmd,
+		stateDealCmd,
 		stateExecTraceCmd,
 		stateNtwkVersionCmd,
 	},
@@ -471,48 +471,6 @@ var stateReplayCmd = &cli.Command{
 			fmt.Printf("%s\t%s\t%s\t%d\t%x\t%d\t%x\n", res.Msg.From, res.Msg.To, res.Msg.Value, res.Msg.Method, res.Msg.Params, res.MsgRct.ExitCode, res.MsgRct.Return)
 			printInternalExecutions("\t", res.ExecutionTrace.Subcalls)
 		}
-
-		return nil
-	},
-}
-
-var stateGetDealSetCmd = &cli.Command{
-	Name:      "get-deal",
-	Usage:     "View on-chain deal info",
-	ArgsUsage: "[dealId]",
-	Action: func(cctx *cli.Context) error {
-		api, closer, err := GetFullNodeAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
-		ctx := ReqContext(cctx)
-
-		if !cctx.Args().Present() {
-			return fmt.Errorf("must specify deal ID")
-		}
-
-		dealid, err := strconv.ParseUint(cctx.Args().First(), 10, 64)
-		if err != nil {
-			return xerrors.Errorf("parsing deal ID: %w", err)
-		}
-
-		ts, err := LoadTipSet(ctx, cctx, api)
-		if err != nil {
-			return err
-		}
-
-		deal, err := api.StateMarketStorageDeal(ctx, abi.DealID(dealid), ts.Key())
-		if err != nil {
-			return err
-		}
-
-		data, err := json.MarshalIndent(deal, "", "  ")
-		if err != nil {
-			return err
-		}
-		fmt.Println(string(data))
 
 		return nil
 	},
@@ -1864,6 +1822,116 @@ var stateNtwkVersionCmd = &cli.Command{
 		}
 
 		fmt.Printf("Network Version: %d\n", nv)
+
+		return nil
+	},
+}
+
+var stateDealCmd = &cli.Command{
+	Name:  "deal",
+	Usage: "Get information about deal(s)",
+	Subcommands: []*cli.Command{
+		stateGetDealSetCmd,
+		stateDealFeesCmd,
+	},
+}
+
+var stateGetDealSetCmd = &cli.Command{
+	Name:      "get-deal",
+	Usage:     "View on-chain deal info",
+	ArgsUsage: "[dealId]",
+	Action: func(cctx *cli.Context) error {
+		api, closer, err := GetFullNodeAPI(cctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		ctx := ReqContext(cctx)
+
+		if !cctx.Args().Present() {
+			return fmt.Errorf("must specify deal ID")
+		}
+
+		dealid, err := strconv.ParseUint(cctx.Args().First(), 10, 64)
+		if err != nil {
+			return xerrors.Errorf("parsing deal ID: %w", err)
+		}
+
+		ts, err := LoadTipSet(ctx, cctx, api)
+		if err != nil {
+			return err
+		}
+
+		deal, err := api.StateMarketStorageDeal(ctx, abi.DealID(dealid), ts.Key())
+		if err != nil {
+			return err
+		}
+
+		data, err := json.MarshalIndent(deal, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+
+		return nil
+	},
+}
+
+var stateDealFeesCmd = &cli.Command{
+	Name:      "get-fees",
+	Usage:     "View the storage fees associated with a particular",
+	ArgsUsage: "[dealId]",
+	Action: func(cctx *cli.Context) error {
+		api, closer, err := GetFullNodeAPI(cctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
+
+		ctx := ReqContext(cctx)
+
+		if !cctx.Args().Present() {
+			return fmt.Errorf("must specify deal ID")
+		}
+
+		dealid, err := strconv.ParseUint(cctx.Args().First(), 10, 64)
+		if err != nil {
+			return xerrors.Errorf("parsing deal ID: %w", err)
+		}
+
+		ts, err := LoadTipSet(ctx, cctx, api)
+		if err != nil {
+			return err
+		}
+
+		deal, err := api.StateMarketStorageDeal(ctx, abi.DealID(dealid), ts.Key())
+		if err != nil {
+			return err
+		}
+
+		ppe := deal.Proposal.StoragePricePerEpoch
+		tf := big.Mul(ppe, big.NewInt(int64(deal.Proposal.EndEpoch-deal.Proposal.StartEpoch)))
+
+		var ht abi.ChainEpoch
+		if ts == nil {
+			head, err := api.ChainHead(ctx)
+			if err != nil {
+				return err
+			}
+
+			ht = head.Height()
+		} else {
+			ht = ts.Height()
+		}
+		ef := big.Mul(ppe, big.NewInt(int64(ht-deal.Proposal.StartEpoch)))
+		if ef.LessThan(big.Zero()) {
+			ef = big.Zero()
+		}
+
+		fmt.Println("Earned fees: ", ef)
+		fmt.Println("Pending fees: ", big.Sub(tf, ef))
+		fmt.Println("Total fees: ", tf)
 
 		return nil
 	},
