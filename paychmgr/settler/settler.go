@@ -21,6 +21,7 @@ import (
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/node/impl/full"
 	payapi "github.com/filecoin-project/lotus/node/impl/paych"
+	"github.com/filecoin-project/lotus/node/modules/helpers"
 )
 
 var log = logging.Logger("payment-channel-settler")
@@ -40,7 +41,7 @@ type settlerAPI interface {
 	PaychVoucherCheckSpendable(context.Context, address.Address, *paych.SignedVoucher, []byte, []byte) (bool, error)
 	PaychVoucherList(context.Context, address.Address) ([]*paych.SignedVoucher, error)
 	PaychVoucherSubmit(context.Context, address.Address, *paych.SignedVoucher, []byte, []byte) (cid.Cid, error)
-	StateWaitMsg(ctx context.Context, cid cid.Cid, confidence uint64) (*api.MsgLookup, error)
+	StateWaitMsg(ctx context.Context, cid cid.Cid, confidence uint64, limit abi.ChainEpoch, allowReplaced bool) (*api.MsgLookup, error)
 }
 
 type paymentChannelSettler struct {
@@ -50,11 +51,12 @@ type paymentChannelSettler struct {
 
 // SettlePaymentChannels checks the chain for events related to payment channels settling and
 // submits any vouchers for inbound channels tracked for this node
-func SettlePaymentChannels(lc fx.Lifecycle, api API) error {
+func SettlePaymentChannels(mctx helpers.MetricsCtx, lc fx.Lifecycle, papi API) error {
+	ctx := helpers.LifecycleCtx(mctx, lc)
 	lc.Append(fx.Hook{
-		OnStart: func(ctx context.Context) error {
-			pcs := newPaymentChannelSettler(ctx, &api)
-			ev := events.NewEvents(ctx, &api)
+		OnStart: func(context.Context) error {
+			pcs := newPaymentChannelSettler(ctx, &papi)
+			ev := events.NewEvents(ctx, papi)
 			return ev.Called(pcs.check, pcs.messageHandler, pcs.revertHandler, int(build.MessageConfidence+1), events.NoTimeout, pcs.matcher)
 		},
 	})
@@ -91,9 +93,10 @@ func (pcs *paymentChannelSettler) messageHandler(msg *types.Message, rec *types.
 		}
 		go func(voucher *paych.SignedVoucher, submitMessageCID cid.Cid) {
 			defer wg.Done()
-			msgLookup, err := pcs.api.StateWaitMsg(pcs.ctx, submitMessageCID, build.MessageConfidence)
+			msgLookup, err := pcs.api.StateWaitMsg(pcs.ctx, submitMessageCID, build.MessageConfidence, api.LookbackNoLimit, true)
 			if err != nil {
 				log.Errorf("submitting voucher: %s", err.Error())
+				return
 			}
 			if msgLookup.Receipt.ExitCode != 0 {
 				log.Errorf("failed submitting voucher: %+v", voucher)

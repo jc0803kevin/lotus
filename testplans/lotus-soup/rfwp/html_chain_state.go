@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/filecoin-project/oni/lotus-soup/testkit"
+	"github.com/filecoin-project/lotus/testplans/lotus-soup/testkit"
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/lotus/api/v0api"
 	"github.com/filecoin-project/lotus/cli"
 	tstats "github.com/filecoin-project/lotus/tools/stats"
 	"github.com/ipfs/go-cid"
@@ -21,7 +22,7 @@ func FetchChainState(t *testkit.TestEnvironment, m *testkit.LotusMiner) error {
 	ctx := context.Background()
 	api := m.FullApi
 
-	tipsetsCh, err := tstats.GetTips(ctx, m.FullApi, abi.ChainEpoch(height), headlag)
+	tipsetsCh, err := tstats.GetTips(ctx, &v0api.WrapperV1Full{FullNode: m.FullApi}, abi.ChainEpoch(height), headlag)
 	if err != nil {
 		return err
 	}
@@ -55,7 +56,7 @@ func FetchChainState(t *testkit.TestEnvironment, m *testkit.LotusMiner) error {
 				return c.Code, nil
 			}
 
-			return cli.ComputeStateHTMLTempl(file, tipset, stout, getCode)
+			return cli.ComputeStateHTMLTempl(file, tipset, stout, true, getCode)
 		}()
 		if err != nil {
 			return err

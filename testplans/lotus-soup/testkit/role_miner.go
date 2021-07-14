@@ -17,7 +17,6 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-storedcounter"
 	"github.com/filecoin-project/lotus/api"
-	"github.com/filecoin-project/lotus/api/apistruct"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors"
 	genesis_chain "github.com/filecoin-project/lotus/chain/gen/genesis"
@@ -25,8 +24,10 @@ import (
 	"github.com/filecoin-project/lotus/chain/wallet"
 	"github.com/filecoin-project/lotus/cmd/lotus-seed/seed"
 	"github.com/filecoin-project/lotus/extern/sector-storage/stores"
+	"github.com/filecoin-project/lotus/markets/storageadapter"
 	"github.com/filecoin-project/lotus/miner"
 	"github.com/filecoin-project/lotus/node"
+	"github.com/filecoin-project/lotus/node/config"
 	"github.com/filecoin-project/lotus/node/impl"
 	"github.com/filecoin-project/lotus/node/modules"
 	"github.com/filecoin-project/lotus/node/repo"
@@ -52,6 +53,7 @@ type LotusMiner struct {
 	NodeRepo     repo.Repo
 	FullNetAddrs []peer.AddrInfo
 	GenesisMsg   *GenesisMsg
+	Subsystems   config.MinerSubsystemConfig
 
 	t *TestEnvironment
 }
@@ -108,7 +110,7 @@ func PrepareMiner(t *TestEnvironment) (*LotusMiner, error) {
 	}
 
 	sectors := t.IntParam("sectors")
-	genMiner, _, err := seed.PreSeal(minerAddr, abi.RegisteredSealProof_StackedDrg2KiBV1, 0, sectors, presealDir, []byte("TODO: randomize this"), &walletKey.KeyInfo, false)
+	genMiner, _, err := seed.PreSeal(minerAddr, abi.RegisteredSealProof_StackedDrg8MiBV1, 0, sectors, presealDir, []byte("TODO: randomize this"), &walletKey.KeyInfo, false)
 	if err != nil {
 		return nil, err
 	}
@@ -141,11 +143,21 @@ func PrepareMiner(t *TestEnvironment) (*LotusMiner, error) {
 		return nil, err
 	}
 
+	var subsystems config.MinerSubsystemConfig
+
 	{
 		lr, err := minerRepo.Lock(repo.StorageMiner)
 		if err != nil {
 			return nil, err
 		}
+
+		c, err := lr.Config()
+		if err != nil {
+			return nil, err
+		}
+
+		cfg := c.(*config.StorageMiner)
+		subsystems = cfg.Subsystems
 
 		ks, err := lr.KeyStore()
 		if err != nil {
@@ -165,7 +177,7 @@ func PrepareMiner(t *TestEnvironment) (*LotusMiner, error) {
 			return nil, err
 		}
 
-		ds, err := lr.Datastore("/metadata")
+		ds, err := lr.Datastore(context.Background(), "/metadata")
 		if err != nil {
 			return nil, err
 		}
@@ -239,7 +251,7 @@ func PrepareMiner(t *TestEnvironment) (*LotusMiner, error) {
 
 	stop1, err := node.New(context.Background(),
 		node.FullAPI(&n.FullApi),
-		node.Online(),
+		node.Base(),
 		node.Repo(nodeRepo),
 		withGenesis(genesisMsg.Genesis),
 		withApiEndpoint(fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", t.PortNumber("node_rpc", "0"))),
@@ -260,10 +272,14 @@ func PrepareMiner(t *TestEnvironment) (*LotusMiner, error) {
 	}
 
 	minerOpts := []node.Option{
-		node.StorageMiner(&n.MinerApi),
-		node.Online(),
+		node.StorageMiner(&n.MinerApi, subsystems),
+		node.Base(),
 		node.Repo(minerRepo),
 		node.Override(new(api.FullNode), n.FullApi),
+		node.Override(new(*storageadapter.DealPublisher), storageadapter.NewDealPublisher(nil, storageadapter.PublishMsgConfig{
+			Period:         15 * time.Second,
+			MaxDealsPerMsg: 1,
+		})),
 		withApiEndpoint(fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", t.PortNumber("miner_rpc", "0"))),
 		withMinerListenAddress(minerIP),
 	}
@@ -316,7 +332,7 @@ func PrepareMiner(t *TestEnvironment) (*LotusMiner, error) {
 	}
 
 	// print out the admin auth token
-	token, err := n.MinerApi.AuthNew(ctx, apistruct.AllPermissions)
+	token, err := n.MinerApi.AuthNew(ctx, api.AllPermissions)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +428,7 @@ func PrepareMiner(t *TestEnvironment) (*LotusMiner, error) {
 		return err.ErrorOrNil()
 	}
 
-	m := &LotusMiner{n, minerRepo, nodeRepo, fullNetAddrs, genesisMsg, t}
+	m := &LotusMiner{n, minerRepo, nodeRepo, fullNetAddrs, genesisMsg, subsystems, t}
 
 	return m, nil
 }
@@ -439,7 +455,7 @@ func RestoreMiner(t *TestEnvironment, m *LotusMiner) (*LotusMiner, error) {
 
 	stop1, err := node.New(context.Background(),
 		node.FullAPI(&n.FullApi),
-		node.Online(),
+		node.Base(),
 		node.Repo(nodeRepo),
 		//withGenesis(genesisMsg.Genesis),
 		withApiEndpoint(fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", t.PortNumber("node_rpc", "0"))),
@@ -453,8 +469,8 @@ func RestoreMiner(t *TestEnvironment, m *LotusMiner) (*LotusMiner, error) {
 	}
 
 	minerOpts := []node.Option{
-		node.StorageMiner(&n.MinerApi),
-		node.Online(),
+		node.StorageMiner(&n.MinerApi, m.Subsystems),
+		node.Base(),
 		node.Repo(minerRepo),
 		node.Override(new(api.FullNode), n.FullApi),
 		withApiEndpoint(fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", t.PortNumber("miner_rpc", "0"))),
@@ -497,7 +513,7 @@ func RestoreMiner(t *TestEnvironment, m *LotusMiner) (*LotusMiner, error) {
 		t.RecordMessage("connected to full node of miner %d on %v", i, fullNetAddrs[i])
 	}
 
-	pm := &LotusMiner{n, minerRepo, nodeRepo, fullNetAddrs, genesisMsg, t}
+	pm := &LotusMiner{n, minerRepo, nodeRepo, fullNetAddrs, genesisMsg, m.Subsystems, t}
 
 	return pm, err
 }
@@ -596,7 +612,7 @@ func startStorageMinerAPIServer(t *TestEnvironment, repo repo.Repo, minerApi api
 	rpcServer.Register("Filecoin", minerApi)
 
 	mux.Handle("/rpc/v0", rpcServer)
-	mux.PathPrefix("/remote").HandlerFunc(minerApi.(*impl.StorageMinerAPI).ServeRemote)
+	mux.PathPrefix("/remote").HandlerFunc(minerApi.(*impl.StorageMinerAPI).ServeRemote(true))
 	mux.PathPrefix("/").Handler(http.DefaultServeMux) // pprof
 
 	exporter, err := prometheus.NewExporter(prometheus.Options{
@@ -610,7 +626,7 @@ func startStorageMinerAPIServer(t *TestEnvironment, repo repo.Repo, minerApi api
 
 	ah := &auth.Handler{
 		Verify: func(ctx context.Context, token string) ([]auth.Permission, error) {
-			return apistruct.AllPermissions, nil
+			return api.AllPermissions, nil
 		},
 		Next: mux.ServeHTTP,
 	}

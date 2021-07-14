@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 
-	"github.com/filecoin-project/lotus/chain/actors"
 	"github.com/filecoin-project/lotus/chain/actors/policy"
 
 	proof2 "github.com/filecoin-project/specs-actors/v2/actors/runtime/proof"
@@ -53,7 +52,7 @@ func checkPieces(ctx context.Context, maddr address.Address, si SectorInfo, api 
 			continue
 		}
 
-		proposal, err := api.StateMarketStorageDeal(ctx, p.DealInfo.DealID, tok)
+		proposal, err := api.StateMarketStorageDealProposal(ctx, p.DealInfo.DealID, tok)
 		if err != nil {
 			return &ErrInvalidDeals{xerrors.Errorf("getting deal %d for piece %d: %w", p.DealInfo.DealID, i, err)}
 		}
@@ -63,7 +62,7 @@ func checkPieces(ctx context.Context, maddr address.Address, si SectorInfo, api 
 		}
 
 		if proposal.PieceCID != p.Piece.PieceCID {
-			return &ErrInvalidDeals{xerrors.Errorf("piece %d (of %d) of sector %d refers deal %d with wrong PieceCID: %x != %x", i, len(si.Pieces), si.SectorNumber, p.DealInfo.DealID, p.Piece.PieceCID, proposal.PieceCID)}
+			return &ErrInvalidDeals{xerrors.Errorf("piece %d (of %d) of sector %d refers deal %d with wrong PieceCID: %s != %s", i, len(si.Pieces), si.SectorNumber, p.DealInfo.DealID, p.Piece.PieceCID, proposal.PieceCID)}
 		}
 
 		if p.Piece.Size != proposal.PieceSize {
@@ -94,14 +93,9 @@ func checkPrecommit(ctx context.Context, maddr address.Address, si SectorInfo, t
 		return &ErrBadCommD{xerrors.Errorf("on chain CommD differs from sector: %s != %s", commD, si.CommD)}
 	}
 
-	nv, err := api.StateNetworkVersion(ctx, tok)
-	if err != nil {
-		return &ErrApi{xerrors.Errorf("calling StateNetworkVersion: %w", err)}
-	}
+	ticketEarliest := height - policy.MaxPreCommitRandomnessLookback
 
-	msd := policy.GetMaxProveCommitDuration(actors.VersionForNetwork(nv), si.SectorType)
-
-	if height-(si.TicketEpoch+policy.SealRandomnessLookback) > msd {
+	if si.TicketEpoch < ticketEarliest {
 		return &ErrExpiredTicket{xerrors.Errorf("ticket expired: seal height: %d, head: %d", si.TicketEpoch+policy.SealRandomnessLookback, height)}
 	}
 

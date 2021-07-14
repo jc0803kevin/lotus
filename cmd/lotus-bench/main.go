@@ -32,7 +32,6 @@ import (
 	lapi "github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
-	"github.com/filecoin-project/lotus/chain/actors/policy"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/genesis"
 )
@@ -40,6 +39,8 @@ import (
 var log = logging.Logger("lotus-bench")
 
 type BenchResults struct {
+	EnvVar map[string]string
+
 	SectorSize   abi.SectorSize
 	SectorNumber int
 
@@ -175,8 +176,6 @@ var sealBenchCmd = &cli.Command{
 		},
 	},
 	Action: func(c *cli.Context) error {
-		policy.AddSupportedProofTypes(abi.RegisteredSealProof_StackedDrg2KiBV1)
-
 		if c.Bool("no-gpu") {
 			err := os.Setenv("BELLMAN_NO_GPU", "1")
 			if err != nil {
@@ -244,7 +243,7 @@ var sealBenchCmd = &cli.Command{
 		// Only fetch parameters if actually needed
 		skipc2 := c.Bool("skip-commit2")
 		if !skipc2 {
-			if err := paramfetch.GetParams(lcli.ReqContext(c), build.ParametersJSON(), uint64(sectorSize)); err != nil {
+			if err := paramfetch.GetParams(lcli.ReqContext(c), build.ParametersJSON(), build.SrsJSON(), uint64(sectorSize)); err != nil {
 				return xerrors.Errorf("getting params: %w", err)
 			}
 		}
@@ -446,6 +445,15 @@ var sealBenchCmd = &cli.Command{
 			bo.VerifyWindowPostHot = verifyWindowpost2.Sub(verifyWindowpost1)
 		}
 
+		bo.EnvVar = make(map[string]string)
+		for _, envKey := range []string{"BELLMAN_NO_GPU", "FIL_PROOFS_MAXIMIZE_CACHING", "FIL_PROOFS_USE_GPU_COLUMN_BUILDER",
+			"FIL_PROOFS_USE_GPU_TREE_BUILDER", "FIL_PROOFS_USE_MULTICORE_SDR", "BELLMAN_CUSTOM_GPU"} {
+			envValue, found := os.LookupEnv(envKey)
+			if found {
+				bo.EnvVar[envKey] = envValue
+			}
+		}
+
 		if c.Bool("json-out") {
 			data, err := json.MarshalIndent(bo, "", "  ")
 			if err != nil {
@@ -454,6 +462,10 @@ var sealBenchCmd = &cli.Command{
 
 			fmt.Println(string(data))
 		} else {
+			fmt.Println("environment variable list:")
+			for envKey, envValue := range bo.EnvVar {
+				fmt.Printf("%s=%s\n", envKey, envValue)
+			}
 			fmt.Printf("----\nresults (v28) SectorSize:(%d), SectorNumber:(%d)\n", sectorSize, sectorNumber)
 			if robench == "" {
 				fmt.Printf("seal: addPiece: %s (%s)\n", bo.SealingSum.AddPiece, bps(bo.SectorSize, bo.SectorNumber, bo.SealingSum.AddPiece))
@@ -726,7 +738,7 @@ var proveCmd = &cli.Command{
 			return xerrors.Errorf("unmarshalling input file: %w", err)
 		}
 
-		if err := paramfetch.GetParams(lcli.ReqContext(c), build.ParametersJSON(), c2in.SectorSize); err != nil {
+		if err := paramfetch.GetParams(lcli.ReqContext(c), build.ParametersJSON(), build.SrsJSON(), c2in.SectorSize); err != nil {
 			return xerrors.Errorf("getting params: %w", err)
 		}
 

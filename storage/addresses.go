@@ -5,6 +5,7 @@ import (
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/big"
 
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
@@ -24,12 +25,22 @@ type AddressSelector struct {
 }
 
 func (as *AddressSelector) AddressFor(ctx context.Context, a addrSelectApi, mi miner.MinerInfo, use api.AddrUse, goodFunds, minFunds abi.TokenAmount) (address.Address, abi.TokenAmount, error) {
+	if as == nil {
+		// should only happen in some tests
+		log.Warnw("smart address selection disabled, using worker address")
+		return mi.Worker, big.Zero(), nil
+	}
+
 	var addrs []address.Address
 	switch use {
 	case api.PreCommitAddr:
 		addrs = append(addrs, as.PreCommitControl...)
 	case api.CommitAddr:
 		addrs = append(addrs, as.CommitControl...)
+	case api.TerminateSectorsAddr:
+		addrs = append(addrs, as.TerminateControl...)
+	case api.DealPublishAddr:
+		addrs = append(addrs, as.DealPublishControl...)
 	default:
 		defaultCtl := map[address.Address]struct{}{}
 		for _, a := range mi.ControlAddresses {
@@ -38,7 +49,12 @@ func (as *AddressSelector) AddressFor(ctx context.Context, a addrSelectApi, mi m
 		delete(defaultCtl, mi.Owner)
 		delete(defaultCtl, mi.Worker)
 
-		for _, addr := range append(append([]address.Address{}, as.PreCommitControl...), as.CommitControl...) {
+		configCtl := append([]address.Address{}, as.PreCommitControl...)
+		configCtl = append(configCtl, as.CommitControl...)
+		configCtl = append(configCtl, as.TerminateControl...)
+		configCtl = append(configCtl, as.DealPublishControl...)
+
+		for _, addr := range configCtl {
 			if addr.Protocol() != address.ID {
 				var err error
 				addr, err = a.StateLookupID(ctx, addr, types.EmptyTSK)
@@ -55,7 +71,13 @@ func (as *AddressSelector) AddressFor(ctx context.Context, a addrSelectApi, mi m
 			addrs = append(addrs, a)
 		}
 	}
-	addrs = append(addrs, mi.Owner, mi.Worker)
+
+	if len(addrs) == 0 || !as.DisableWorkerFallback {
+		addrs = append(addrs, mi.Worker)
+	}
+	if !as.DisableOwnerFallback {
+		addrs = append(addrs, mi.Owner)
+	}
 
 	return pickAddress(ctx, a, mi, goodFunds, minFunds, addrs)
 }
@@ -89,7 +111,7 @@ func pickAddress(ctx context.Context, a addrSelectApi, mi miner.MinerInfo, goodF
 		}
 	}
 
-	log.Warnw("No address had enough funds to for full PoSt message Fee, selecting least bad address", "address", leastBad, "balance", types.FIL(bestAvail), "optimalFunds", types.FIL(goodFunds), "minFunds", types.FIL(minFunds))
+	log.Warnw("No address had enough funds to for full message Fee, selecting least bad address", "address", leastBad, "balance", types.FIL(bestAvail), "optimalFunds", types.FIL(goodFunds), "minFunds", types.FIL(minFunds))
 
 	return leastBad, bestAvail, nil
 }
@@ -129,6 +151,6 @@ func maybeUseAddress(ctx context.Context, a addrSelectApi, addr address.Address,
 		*bestAvail = b
 	}
 
-	log.Warnw("address didn't have enough funds for window post message", "address", addr, "required", types.FIL(goodFunds), "balance", types.FIL(b))
+	log.Warnw("address didn't have enough funds to send message", "address", addr, "required", types.FIL(goodFunds), "balance", types.FIL(b))
 	return false
 }

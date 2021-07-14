@@ -5,6 +5,7 @@ import (
 	gobig "math/big"
 	"os"
 
+	"github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/chain/state"
 	"github.com/filecoin-project/lotus/chain/stmgr"
 	"github.com/filecoin-project/lotus/chain/store"
@@ -12,7 +13,6 @@ import (
 	"github.com/filecoin-project/lotus/chain/vm"
 	"github.com/filecoin-project/lotus/conformance/chaos"
 	"github.com/filecoin-project/lotus/extern/sector-storage/ffiwrapper"
-	"github.com/filecoin-project/lotus/lib/blockstore"
 
 	_ "github.com/filecoin-project/lotus/lib/sigs/bls"  // enable bls signatures
 	_ "github.com/filecoin-project/lotus/lib/sigs/secp" // enable secp signatures
@@ -71,6 +71,9 @@ type ExecuteTipsetResult struct {
 	AppliedMessages []*types.Message
 	// AppliedResults stores the results of AppliedMessages, in the same order.
 	AppliedResults []*vm.ApplyRet
+
+	// PostBaseFee returns the basefee after applying this tipset.
+	PostBaseFee abi.TokenAmount
 }
 
 type ExecuteTipsetParams struct {
@@ -138,16 +141,11 @@ func (d *Driver) ExecuteTipset(bs blockstore.Blockstore, ds ds.Batching, params 
 		blocks = append(blocks, sb)
 	}
 
-	var (
-		messages []*types.Message
-		results  []*vm.ApplyRet
-	)
-
-	recordOutputs := func(_ cid.Cid, msg *types.Message, ret *vm.ApplyRet) error {
-		messages = append(messages, msg)
-		results = append(results, ret)
-		return nil
+	recordOutputs := &outputRecorder{
+		messages: []*types.Message{},
+		results:  []*vm.ApplyRet{},
 	}
+
 	postcid, receiptsroot, err := sm.ApplyBlocks(context.Background(),
 		params.ParentEpoch,
 		params.Preroot,
@@ -166,8 +164,8 @@ func (d *Driver) ExecuteTipset(bs blockstore.Blockstore, ds ds.Batching, params 
 	ret := &ExecuteTipsetResult{
 		ReceiptsRoot:    receiptsroot,
 		PostStateRoot:   postcid,
-		AppliedMessages: messages,
-		AppliedResults:  results,
+		AppliedMessages: recordOutputs.messages,
+		AppliedResults:  recordOutputs.results,
 	}
 	return ret, nil
 }
@@ -280,4 +278,15 @@ func CircSupplyOrDefault(circSupply *gobig.Int) abi.TokenAmount {
 		return DefaultCirculatingSupply
 	}
 	return big.NewFromGo(circSupply)
+}
+
+type outputRecorder struct {
+	messages []*types.Message
+	results  []*vm.ApplyRet
+}
+
+func (o *outputRecorder) MessageApplied(ctx context.Context, ts *types.TipSet, mcid cid.Cid, msg *types.Message, ret *vm.ApplyRet, implicit bool) error {
+	o.messages = append(o.messages, msg)
+	o.results = append(o.results, ret)
+	return nil
 }

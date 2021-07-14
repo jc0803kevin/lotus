@@ -12,7 +12,7 @@ import (
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
-	"github.com/filecoin-project/lotus/api/apibstore"
+	"github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/chain/actors/builtin/miner"
 	"github.com/filecoin-project/lotus/chain/store"
 	"github.com/filecoin-project/lotus/chain/types"
@@ -36,14 +36,6 @@ var provingFaultsCmd = &cli.Command{
 	Name:  "faults",
 	Usage: "View the currently known proving faulty sectors information",
 	Action: func(cctx *cli.Context) error {
-		color.NoColor = !cctx.Bool("color")
-
-		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
 			return err
@@ -52,9 +44,9 @@ var provingFaultsCmd = &cli.Command{
 
 		ctx := lcli.ReqContext(cctx)
 
-		stor := store.ActorStore(ctx, apibstore.NewAPIBlockstore(api))
+		stor := store.ActorStore(ctx, blockstore.NewAPIBlockstore(api))
 
-		maddr, err := getActorAddress(ctx, nodeApi, cctx.String("actor"))
+		maddr, err := getActorAddress(ctx, cctx)
 		if err != nil {
 			return err
 		}
@@ -96,14 +88,6 @@ var provingInfoCmd = &cli.Command{
 	Name:  "info",
 	Usage: "View current state information",
 	Action: func(cctx *cli.Context) error {
-		color.NoColor = !cctx.Bool("color")
-
-		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
 			return err
@@ -112,7 +96,7 @@ var provingInfoCmd = &cli.Command{
 
 		ctx := lcli.ReqContext(cctx)
 
-		maddr, err := getActorAddress(ctx, nodeApi, cctx.String("actor"))
+		maddr, err := getActorAddress(ctx, cctx)
 		if err != nil {
 			return err
 		}
@@ -127,7 +111,7 @@ var provingInfoCmd = &cli.Command{
 			return err
 		}
 
-		stor := store.ActorStore(ctx, apibstore.NewAPIBlockstore(api))
+		stor := store.ActorStore(ctx, blockstore.NewAPIBlockstore(api))
 
 		mas, err := miner.Load(stor, mact)
 		if err != nil {
@@ -183,7 +167,7 @@ var provingInfoCmd = &cli.Command{
 
 		var faultPerc float64
 		if proving > 0 {
-			faultPerc = float64(faults*10000/proving) / 100
+			faultPerc = float64(faults * 100 / proving)
 		}
 
 		fmt.Printf("Current Epoch:           %d\n", cd.CurrentEpoch)
@@ -209,14 +193,6 @@ var provingDeadlinesCmd = &cli.Command{
 	Name:  "deadlines",
 	Usage: "View the current proving period deadlines information",
 	Action: func(cctx *cli.Context) error {
-		color.NoColor = !cctx.Bool("color")
-
-		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
 			return err
@@ -225,7 +201,7 @@ var provingDeadlinesCmd = &cli.Command{
 
 		ctx := lcli.ReqContext(cctx)
 
-		maddr, err := getActorAddress(ctx, nodeApi, cctx.String("actor"))
+		maddr, err := getActorAddress(ctx, cctx)
 		if err != nil {
 			return err
 		}
@@ -301,12 +277,6 @@ var provingDeadlineInfoCmd = &cli.Command{
 			return xerrors.Errorf("could not parse deadline index: %w", err)
 		}
 
-		nodeApi, closer, err := lcli.GetStorageMinerAPI(cctx)
-		if err != nil {
-			return err
-		}
-		defer closer()
-
 		api, acloser, err := lcli.GetFullNodeAPI(cctx)
 		if err != nil {
 			return err
@@ -315,7 +285,7 @@ var provingDeadlineInfoCmd = &cli.Command{
 
 		ctx := lcli.ReqContext(cctx)
 
-		maddr, err := getActorAddress(ctx, nodeApi, cctx.String("actor"))
+		maddr, err := getActorAddress(ctx, cctx)
 		if err != nil {
 			return err
 		}
@@ -430,11 +400,6 @@ var provingCheckProvableCmd = &cli.Command{
 			return err
 		}
 
-		pf, err := info.SealProofType.RegisteredWindowPoStProof()
-		if err != nil {
-			return err
-		}
-
 		partitions, err := api.StateMinerPartitions(ctx, addr, dlIdx, types.EmptyTSK)
 		if err != nil {
 			return err
@@ -446,7 +411,7 @@ var provingCheckProvableCmd = &cli.Command{
 		for parIdx, par := range partitions {
 			sectors := make(map[abi.SectorNumber]struct{})
 
-			sectorInfos, err := api.StateMinerSectors(ctx, addr, &par.AllSectors, types.EmptyTSK)
+			sectorInfos, err := api.StateMinerSectors(ctx, addr, &par.LiveSectors, types.EmptyTSK)
 			if err != nil {
 				return err
 			}
@@ -463,7 +428,7 @@ var provingCheckProvableCmd = &cli.Command{
 				})
 			}
 
-			bad, err := sapi.CheckProvable(ctx, pf, tocheck, cctx.Bool("slow"))
+			bad, err := sapi.CheckProvable(ctx, info.WindowPoStProofType, tocheck, cctx.Bool("slow"))
 			if err != nil {
 				return err
 			}

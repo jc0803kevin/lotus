@@ -5,33 +5,44 @@ import (
 	"encoding/json"
 	"fmt"
 
+	init_ "github.com/filecoin-project/lotus/chain/actors/builtin/init"
+
+	"github.com/filecoin-project/lotus/chain/actors"
+
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/big"
 
-	"github.com/filecoin-project/specs-actors/actors/builtin"
 	"github.com/filecoin-project/specs-actors/actors/util/adt"
 
-	init_ "github.com/filecoin-project/specs-actors/actors/builtin/init"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/xerrors"
 
+	bstore "github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/genesis"
-	bstore "github.com/filecoin-project/lotus/lib/blockstore"
 )
 
-func SetupInitActor(bs bstore.Blockstore, netname string, initialActors []genesis.Actor, rootVerifier genesis.Actor, remainder genesis.Actor) (int64, *types.Actor, map[address.Address]address.Address, error) {
+func SetupInitActor(ctx context.Context, bs bstore.Blockstore, netname string, initialActors []genesis.Actor, rootVerifier genesis.Actor, remainder genesis.Actor, av actors.Version) (int64, *types.Actor, map[address.Address]address.Address, error) {
 	if len(initialActors) > MaxAccounts {
 		return 0, nil, nil, xerrors.New("too many initial actors")
 	}
 
-	var ias init_.State
-	ias.NextID = MinerStart
-	ias.NetworkName = netname
+	cst := cbor.NewCborStore(bs)
+	ist, err := init_.MakeState(adt.WrapStore(ctx, cst), av, netname)
+	if err != nil {
+		return 0, nil, nil, err
+	}
 
-	store := adt.WrapStore(context.TODO(), cbor.NewCborStore(bs))
-	amap := adt.MakeEmptyMap(store)
+	if err = ist.SetNextID(MinerStart); err != nil {
+		return 0, nil, nil, err
+	}
+
+	amap, err := ist.AddressMap()
+	if err != nil {
+		return 0, nil, nil, err
+	}
 
 	keyToId := map[address.Address]address.Address{}
 	counter := int64(AccountStart)
@@ -133,25 +144,47 @@ func SetupInitActor(bs bstore.Blockstore, netname string, initialActors []genesi
 		}
 	}
 
-	err := setupMsig(remainder.Meta)
-	if err != nil {
-		return 0, nil, nil, xerrors.Errorf("setting up remainder msig: %w", err)
+	if remainder.Type == genesis.TAccount {
+		var ainfo genesis.AccountMeta
+		if err := json.Unmarshal(remainder.Meta, &ainfo); err != nil {
+			return 0, nil, nil, xerrors.Errorf("unmarshaling account meta: %w", err)
+		}
+
+		// TODO: Use builtin.ReserveAddress...
+		value := cbg.CborInt(90)
+		if err := amap.Put(abi.AddrKey(ainfo.Owner), &value); err != nil {
+			return 0, nil, nil, err
+		}
+	} else if remainder.Type == genesis.TMultisig {
+		err := setupMsig(remainder.Meta)
+		if err != nil {
+			return 0, nil, nil, xerrors.Errorf("setting up remainder msig: %w", err)
+		}
 	}
 
 	amapaddr, err := amap.Root()
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	ias.AddressMap = amapaddr
 
-	statecid, err := store.Put(store.Context(), &ias)
+	if err = ist.SetAddressMap(amapaddr); err != nil {
+		return 0, nil, nil, err
+	}
+
+	statecid, err := cst.Put(ctx, ist.GetState())
+	if err != nil {
+		return 0, nil, nil, err
+	}
+
+	actcid, err := init_.GetActorCodeID(av)
 	if err != nil {
 		return 0, nil, nil, err
 	}
 
 	act := &types.Actor{
-		Code: builtin.InitActorCodeID,
-		Head: statecid,
+		Code:    actcid,
+		Head:    statecid,
+		Balance: big.Zero(),
 	}
 
 	return counter, act, keyToId, nil

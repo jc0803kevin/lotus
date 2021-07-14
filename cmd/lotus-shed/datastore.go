@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,7 +13,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/ipfs/go-datastore"
 	dsq "github.com/ipfs/go-datastore/query"
-	logging "github.com/ipfs/go-log"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/mitchellh/go-homedir"
 	"github.com/polydawn/refmt/cbor"
 	"github.com/urfave/cli/v2"
@@ -75,7 +76,7 @@ var datastoreListCmd = &cli.Command{
 		}
 		defer lr.Close() //nolint:errcheck
 
-		ds, err := lr.Datastore(datastore.NewKey(cctx.Args().First()).String())
+		ds, err := lr.Datastore(context.Background(), datastore.NewKey(cctx.Args().First()).String())
 		if err != nil {
 			return err
 		}
@@ -120,7 +121,7 @@ var datastoreGetCmd = &cli.Command{
 	},
 	ArgsUsage: "[namespace key]",
 	Action: func(cctx *cli.Context) error {
-		logging.SetLogLevel("badger", "ERROR") // nolint:errchec
+		logging.SetLogLevel("badger", "ERROR") // nolint:errcheck
 
 		r, err := repo.NewFS(cctx.String("repo"))
 		if err != nil {
@@ -141,7 +142,7 @@ var datastoreGetCmd = &cli.Command{
 		}
 		defer lr.Close() //nolint:errcheck
 
-		ds, err := lr.Datastore(datastore.NewKey(cctx.Args().First()).String())
+		ds, err := lr.Datastore(context.Background(), datastore.NewKey(cctx.Args().First()).String())
 		if err != nil {
 			return err
 		}
@@ -179,8 +180,11 @@ var datastoreBackupStatCmd = &cli.Command{
 		}
 		defer f.Close() // nolint:errcheck
 
-		var keys, kbytes, vbytes uint64
-		err = backupds.ReadBackup(f, func(key datastore.Key, value []byte) error {
+		var keys, logs, kbytes, vbytes uint64
+		clean, err := backupds.ReadBackup(f, func(key datastore.Key, value []byte, log bool) error {
+			if log {
+				logs++
+			}
 			keys++
 			kbytes += uint64(len(key.String()))
 			vbytes += uint64(len(value))
@@ -190,7 +194,9 @@ var datastoreBackupStatCmd = &cli.Command{
 			return err
 		}
 
+		fmt.Println("Truncated:   ", !clean)
 		fmt.Println("Keys:        ", keys)
+		fmt.Println("Log values:  ", log)
 		fmt.Println("Key bytes:   ", units.BytesSize(float64(kbytes)))
 		fmt.Println("Value bytes: ", units.BytesSize(float64(vbytes)))
 
@@ -224,7 +230,7 @@ var datastoreBackupListCmd = &cli.Command{
 		defer f.Close() // nolint:errcheck
 
 		printKv := kvPrinter(cctx.Bool("top-level"), cctx.String("get-enc"))
-		err = backupds.ReadBackup(f, func(key datastore.Key, value []byte) error {
+		_, err = backupds.ReadBackup(f, func(key datastore.Key, value []byte, _ bool) error {
 			return printKv(key.String(), value)
 		})
 		if err != nil {
@@ -318,7 +324,7 @@ var datastoreRewriteCmd = &cli.Command{
 		)
 
 		// open the destination (to) store.
-		opts, err := repo.BadgerBlockstoreOptions(repo.BlockstoreChain, toPath, false)
+		opts, err := repo.BadgerBlockstoreOptions(repo.UniversalBlockstore, toPath, false)
 		if err != nil {
 			return xerrors.Errorf("failed to get badger options: %w", err)
 		}
@@ -328,7 +334,7 @@ var datastoreRewriteCmd = &cli.Command{
 		}
 
 		// open the source (from) store.
-		opts, err = repo.BadgerBlockstoreOptions(repo.BlockstoreChain, fromPath, true)
+		opts, err = repo.BadgerBlockstoreOptions(repo.UniversalBlockstore, fromPath, true)
 		if err != nil {
 			return xerrors.Errorf("failed to get badger options: %w", err)
 		}

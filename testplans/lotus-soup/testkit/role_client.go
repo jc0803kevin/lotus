@@ -10,7 +10,6 @@ import (
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/go-jsonrpc/auth"
 	"github.com/filecoin-project/lotus/api"
-	"github.com/filecoin-project/lotus/api/apistruct"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/chain/wallet"
 	"github.com/filecoin-project/lotus/node"
@@ -67,7 +66,7 @@ func PrepareClient(t *TestEnvironment) (*LotusClient, error) {
 	n := &LotusNode{}
 	stop, err := node.New(context.Background(),
 		node.FullAPI(&n.FullApi),
-		node.Online(),
+		node.Base(),
 		node.Repo(nodeRepo),
 		withApiEndpoint(fmt.Sprintf("/ip4/0.0.0.0/tcp/%s", t.PortNumber("node_rpc", "0"))),
 		withGenesis(genesisMsg.Genesis),
@@ -157,11 +156,11 @@ func (c *LotusClient) RunDefault() error {
 	return nil
 }
 
-func startFullNodeAPIServer(t *TestEnvironment, repo repo.Repo, api api.FullNode) (*http.Server, error) {
+func startFullNodeAPIServer(t *TestEnvironment, repo repo.Repo, napi api.FullNode) (*http.Server, error) {
 	mux := mux.NewRouter()
 
 	rpcServer := jsonrpc.NewServer()
-	rpcServer.Register("Filecoin", api)
+	rpcServer.Register("Filecoin", napi)
 
 	mux.Handle("/rpc/v0", rpcServer)
 
@@ -176,7 +175,7 @@ func startFullNodeAPIServer(t *TestEnvironment, repo repo.Repo, api api.FullNode
 
 	ah := &auth.Handler{
 		Verify: func(ctx context.Context, token string) ([]auth.Permission, error) {
-			return apistruct.AllPermissions, nil
+			return api.AllPermissions, nil
 		},
 		Next: mux.ServeHTTP,
 	}

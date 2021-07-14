@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/filecoin-project/lotus/chain/market"
-
 	gen "github.com/whyrusleeping/cbor-gen"
 
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/chain/exchange"
+	"github.com/filecoin-project/lotus/chain/market"
 	"github.com/filecoin-project/lotus/chain/types"
 	sectorstorage "github.com/filecoin-project/lotus/extern/sector-storage"
 	"github.com/filecoin-project/lotus/extern/sector-storage/storiface"
@@ -54,6 +53,8 @@ func main() {
 		api.SealedRefs{},
 		api.SealTicket{},
 		api.SealSeed{},
+		api.PieceDealInfo{},
+		api.DealSchedule{},
 	)
 	if err != nil {
 		fmt.Println(err)

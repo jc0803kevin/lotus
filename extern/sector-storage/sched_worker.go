@@ -57,6 +57,7 @@ func (sh *scheduler) runWorker(ctx context.Context, w Worker) error {
 		log.Warnw("duplicated worker added", "id", wid)
 
 		// this is ok, we're already handling this worker in a different goroutine
+		sh.workersLk.Unlock()
 		return nil
 	}
 
@@ -295,7 +296,7 @@ func (sw *schedWorker) workerCompactWindows() {
 
 			for ti, todo := range window.todo {
 				needRes := ResourceTable[todo.taskType][todo.sector.ProofType]
-				if !lower.allocated.canHandleRequest(needRes, sw.wid, "compactWindows", worker.info.Resources) {
+				if !lower.allocated.canHandleRequest(needRes, sw.wid, "compactWindows", worker.info) {
 					continue
 				}
 
@@ -351,7 +352,7 @@ assignLoop:
 			worker.lk.Lock()
 			for t, todo := range firstWindow.todo {
 				needRes := ResourceTable[todo.taskType][todo.sector.ProofType]
-				if worker.preparing.canHandleRequest(needRes, sw.wid, "startPreparing", worker.info.Resources) {
+				if worker.preparing.canHandleRequest(needRes, sw.wid, "startPreparing", worker.info) {
 					tidx = t
 					break
 				}
@@ -397,7 +398,7 @@ func (sw *schedWorker) startProcessingTask(taskDone chan struct{}, req *workerRe
 
 	go func() {
 		// first run the prepare step (e.g. fetching sector data from other worker)
-		err := req.prepare(req.ctx, sh.workTracker.worker(sw.wid, w.workerRpc))
+		err := req.prepare(req.ctx, sh.workTracker.worker(sw.wid, w.info, w.workerRpc))
 		sh.workersLk.Lock()
 
 		if err != nil {
@@ -423,7 +424,7 @@ func (sw *schedWorker) startProcessingTask(taskDone chan struct{}, req *workerRe
 		}
 
 		// wait (if needed) for resources in the 'active' window
-		err = w.active.withResources(sw.wid, w.info.Resources, needRes, &sh.workersLk, func() error {
+		err = w.active.withResources(sw.wid, w.info, needRes, &sh.workersLk, func() error {
 			w.lk.Lock()
 			w.preparing.free(w.info.Resources, needRes)
 			w.lk.Unlock()
@@ -436,7 +437,7 @@ func (sw *schedWorker) startProcessingTask(taskDone chan struct{}, req *workerRe
 			}
 
 			// Do the work!
-			err = req.work(req.ctx, sh.workTracker.worker(sw.wid, w.workerRpc))
+			err = req.work(req.ctx, sh.workTracker.worker(sw.wid, w.info, w.workerRpc))
 
 			select {
 			case req.ret <- workerResponse{err: err}:

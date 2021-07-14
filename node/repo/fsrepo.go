@@ -2,6 +2,7 @@ package repo
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,7 +13,7 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
-	"github.com/filecoin-project/lotus/lib/blockstore"
+
 	"github.com/ipfs/go-datastore"
 	fslock "github.com/ipfs/go-fs-lock"
 	logging "github.com/ipfs/go-log/v2"
@@ -21,10 +22,10 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"golang.org/x/xerrors"
 
+	"github.com/filecoin-project/lotus/blockstore"
+	badgerbs "github.com/filecoin-project/lotus/blockstore/badger"
 	"github.com/filecoin-project/lotus/extern/sector-storage/fsutil"
 	"github.com/filecoin-project/lotus/extern/sector-storage/stores"
-	lblockstore "github.com/filecoin-project/lotus/lib/blockstore"
-	badgerbs "github.com/filecoin-project/lotus/lib/blockstore/badger"
 
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/node/config"
@@ -263,9 +264,16 @@ type fsLockedRepo struct {
 	bs     blockstore.Blockstore
 	bsErr  error
 	bsOnce sync.Once
+	ssPath string
+	ssErr  error
+	ssOnce sync.Once
 
 	storageLk sync.Mutex
 	configLk  sync.Mutex
+}
+
+func (fsr *fsLockedRepo) Readonly() bool {
+	return fsr.readonly
 }
 
 func (fsr *fsLockedRepo) Path() string {
@@ -299,8 +307,8 @@ func (fsr *fsLockedRepo) Close() error {
 }
 
 // Blockstore returns a blockstore for the provided data domain.
-func (fsr *fsLockedRepo) Blockstore(domain BlockstoreDomain) (blockstore.Blockstore, error) {
-	if domain != BlockstoreChain {
+func (fsr *fsLockedRepo) Blockstore(ctx context.Context, domain BlockstoreDomain) (blockstore.Blockstore, error) {
+	if domain != UniversalBlockstore {
 		return nil, ErrInvalidBlockstoreDomain
 	}
 
@@ -324,10 +332,25 @@ func (fsr *fsLockedRepo) Blockstore(domain BlockstoreDomain) (blockstore.Blockst
 			fsr.bsErr = err
 			return
 		}
-		fsr.bs = lblockstore.WrapIDStore(bs)
+		fsr.bs = blockstore.WrapIDStore(bs)
 	})
 
 	return fsr.bs, fsr.bsErr
+}
+
+func (fsr *fsLockedRepo) SplitstorePath() (string, error) {
+	fsr.ssOnce.Do(func() {
+		path := fsr.join(filepath.Join(fsDatastore, "splitstore"))
+
+		if err := os.MkdirAll(path, 0755); err != nil {
+			fsr.ssErr = err
+			return
+		}
+
+		fsr.ssPath = path
+	})
+
+	return fsr.ssPath, fsr.ssErr
 }
 
 // join joins path elements with fsr.path
@@ -522,17 +545,31 @@ func (fsr *fsLockedRepo) Get(name string) (types.KeyInfo, error) {
 	return res, nil
 }
 
+const KTrashPrefix = "trash-"
+
 // Put saves key info under given name
 func (fsr *fsLockedRepo) Put(name string, info types.KeyInfo) error {
+	return fsr.put(name, info, 0)
+}
+
+func (fsr *fsLockedRepo) put(rawName string, info types.KeyInfo, retries int) error {
 	if err := fsr.stillValid(); err != nil {
 		return err
+	}
+
+	name := rawName
+	if retries > 0 {
+		name = fmt.Sprintf("%s-%d", rawName, retries)
 	}
 
 	encName := base32.RawStdEncoding.EncodeToString([]byte(name))
 	keyPath := fsr.join(fsKeystore, encName)
 
 	_, err := os.Stat(keyPath)
-	if err == nil {
+	if err == nil && strings.HasPrefix(name, KTrashPrefix) {
+		// retry writing the trash-prefixed file with a number suffix
+		return fsr.put(rawName, info, retries+1)
+	} else if err == nil {
 		return xerrors.Errorf("checking key before put '%s': %w", name, types.ErrKeyExists)
 	} else if !os.IsNotExist(err) {
 		return xerrors.Errorf("checking key before put '%s': %w", name, err)

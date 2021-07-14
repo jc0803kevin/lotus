@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"os"
-	"path/filepath"
+
+	"github.com/filecoin-project/lotus/api/v0api"
 
 	"github.com/fatih/color"
 	"github.com/filecoin-project/go-address"
@@ -316,33 +315,12 @@ func doExtractMessage(opts extractOpts) error {
 			},
 		},
 	}
-
-	return writeVector(vector, opts.file)
-}
-
-func writeVector(vector schema.TestVector, file string) (err error) {
-	output := io.WriteCloser(os.Stdout)
-	if file := file; file != "" {
-		dir := filepath.Dir(file)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("unable to create directory %s: %w", dir, err)
-		}
-		output, err = os.Create(file)
-		if err != nil {
-			return err
-		}
-		defer output.Close() //nolint:errcheck
-		defer log.Printf("wrote test vector to file: %s", file)
-	}
-
-	enc := json.NewEncoder(output)
-	enc.SetIndent("", "  ")
-	return enc.Encode(&vector)
+	return writeVector(&vector, opts.file)
 }
 
 // resolveFromChain queries the chain for the provided message, using the block CID to
 // speed up the query, if provided
-func resolveFromChain(ctx context.Context, api api.FullNode, mcid cid.Cid, block string) (msg *types.Message, execTs *types.TipSet, incTs *types.TipSet, err error) {
+func resolveFromChain(ctx context.Context, api v0api.FullNode, mcid cid.Cid, block string) (msg *types.Message, execTs *types.TipSet, incTs *types.TipSet, err error) {
 	// Extract the full message.
 	msg, err = api.ChainGetMessage(ctx, mcid)
 	if err != nil {
@@ -397,7 +375,7 @@ func resolveFromChain(ctx context.Context, api api.FullNode, mcid cid.Cid, block
 // as the previous tipset. In the context of vector generation, the target
 // tipset is the one where a message was executed, and the previous tipset is
 // the one where the message was included.
-func fetchThisAndPrevTipset(ctx context.Context, api api.FullNode, target types.TipSetKey) (targetTs *types.TipSet, prevTs *types.TipSet, err error) {
+func fetchThisAndPrevTipset(ctx context.Context, api v0api.FullNode, target types.TipSetKey) (targetTs *types.TipSet, prevTs *types.TipSet, err error) {
 	// get the tipset on which this message was "executed" on.
 	// https://github.com/filecoin-project/lotus/issues/2847
 	targetTs, err = api.ChainGetTipSet(ctx, target)
