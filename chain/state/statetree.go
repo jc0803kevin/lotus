@@ -152,7 +152,16 @@ func VersionForNetwork(ver network.Version) (types.StateTreeVersion, error) {
 		return types.StateTreeVersion2, nil
 	case network.Version12:
 		return types.StateTreeVersion3, nil
-	case network.Version13:
+
+		/* inline-gen template
+		{{$lastNv := .latestNetworkVersion}}
+			case{{range .networkVersions}} {{if (ge . 13.)}} network.Version{{.}}{{if (lt . $lastNv)}},{{end}}{{end}}{{end}}:
+
+		/* inline-gen start */
+
+	case network.Version13, network.Version14:
+
+		/* inline-gen end */
 		return types.StateTreeVersion4, nil
 	default:
 		panic(fmt.Sprintf("unsupported network version %d", ver))
@@ -273,7 +282,7 @@ func LoadStateTree(cst cbor.IpldStore, c cid.Cid) (*StateTree, error) {
 	}
 	if err != nil {
 		log.Errorf("failed to load state tree: %s", err)
-		return nil, xerrors.Errorf("failed to load state tree: %w", err)
+		return nil, xerrors.Errorf("failed to load state tree %s: %w", c, err)
 	}
 
 	s := &StateTree{

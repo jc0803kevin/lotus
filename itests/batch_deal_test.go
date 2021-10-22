@@ -18,6 +18,7 @@ import (
 )
 
 func TestBatchDealInput(t *testing.T) {
+	t.Skip("this test is disabled as it's flaky: #4611")
 	kit.QuietMiningLogs()
 
 	var (
@@ -90,7 +91,11 @@ func TestBatchDealInput(t *testing.T) {
 				res, _, _, err := kit.CreateImportFile(ctx, client, rseed, piece)
 				require.NoError(t, err)
 
-				deal := dh.StartDeal(ctx, res.Root, false, dealStartEpoch)
+				dp := dh.DefaultStartDealParams()
+				dp.Data.Root = res.Root
+				dp.DealStartEpoch = dealStartEpoch
+
+				deal := dh.StartDeal(ctx, dp)
 				dh.WaitDealSealed(ctx, deal, false, true, checkNoPadding)
 			}
 

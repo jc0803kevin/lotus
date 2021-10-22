@@ -20,6 +20,10 @@ type Config struct {
 
 	WaitDealsDelay time.Duration
 
+	CommittedCapacitySectorLifetime time.Duration
+
+	StartEpochSealingBuffer abi.ChainEpoch
+
 	AlwaysKeepUnsealedCopy bool
 
 	FinalizeEarly bool
@@ -39,7 +43,8 @@ type Config struct {
 	CommitBatchWait  time.Duration
 	CommitBatchSlack time.Duration
 
-	AggregateAboveBaseFee abi.TokenAmount
+	AggregateAboveBaseFee      abi.TokenAmount
+	BatchPreCommitAboveBaseFee abi.TokenAmount
 
 	TerminateBatchMax  uint64
 	TerminateBatchMin  uint64

@@ -49,7 +49,6 @@ func TestPublishDealsBatching(t *testing.T) {
 			DisableOwnerFallback:  true,
 			DisableWorkerFallback: true,
 		})),
-		kit.LatestActorsAt(-1),
 	)
 
 	client, miner, ens := kit.EnsembleMinimal(t, kit.Account(publisherKey, types.FromFil(10)), kit.MockProofs(), kit.ConstructorOpts(opts))
@@ -69,7 +68,10 @@ func TestPublishDealsBatching(t *testing.T) {
 		upds, err := client.ClientGetDealUpdates(ctx)
 		require.NoError(t, err)
 
-		dh.StartDeal(ctx, res.Root, false, startEpoch)
+		dp := dh.DefaultStartDealParams()
+		dp.Data.Root = res.Root
+		dp.DealStartEpoch = startEpoch
+		dh.StartDeal(ctx, dp)
 
 		// TODO: this sleep is only necessary because deals don't immediately get logged in the dealstore, we should fix this
 		time.Sleep(time.Second)

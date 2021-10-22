@@ -12,7 +12,9 @@ import (
 	"github.com/filecoin-project/go-jsonrpc/auth"
 
 	"github.com/filecoin-project/lotus/api"
+	apitypes "github.com/filecoin-project/lotus/api/types"
 	"github.com/filecoin-project/lotus/build"
+	"github.com/filecoin-project/lotus/journal/alerting"
 	"github.com/filecoin-project/lotus/node/modules/dtypes"
 )
 
@@ -21,8 +23,7 @@ var session = uuid.New()
 type CommonAPI struct {
 	fx.In
 
-	NetAPI
-
+	Alerting     *alerting.Alerting
 	APISecret    *dtypes.APIAlg
 	ShutdownChan dtypes.ShutdownChan
 }
@@ -48,25 +49,8 @@ func (a *CommonAPI) AuthNew(ctx context.Context, perms []auth.Permission) ([]byt
 	return jwt.Sign(&p, (*jwt.HMACSHA)(a.APISecret))
 }
 
-func (a *CommonAPI) LogList(context.Context) ([]string, error) {
-	return logging.GetSubsystems(), nil
-}
-
-func (a *CommonAPI) LogSetLevel(ctx context.Context, subsystem, level string) error {
-	return logging.SetLogLevel(subsystem, level)
-}
-
-func (a *CommonAPI) Shutdown(ctx context.Context) error {
-	a.ShutdownChan <- struct{}{}
-	return nil
-}
-
-func (a *CommonAPI) Session(ctx context.Context) (uuid.UUID, error) {
-	return session, nil
-}
-
-func (a *CommonAPI) Closing(ctx context.Context) (<-chan struct{}, error) {
-	return make(chan struct{}), nil // relies on jsonrpc closing
+func (a *CommonAPI) Discover(ctx context.Context) (apitypes.OpenRPCDocument, error) {
+	return build.OpenRPCDiscoverJSON_Full(), nil
 }
 
 func (a *CommonAPI) Version(context.Context) (api.APIVersion, error) {
@@ -81,4 +65,29 @@ func (a *CommonAPI) Version(context.Context) (api.APIVersion, error) {
 
 		BlockDelay: build.BlockDelaySecs,
 	}, nil
+}
+
+func (a *CommonAPI) LogList(context.Context) ([]string, error) {
+	return logging.GetSubsystems(), nil
+}
+
+func (a *CommonAPI) LogSetLevel(ctx context.Context, subsystem, level string) error {
+	return logging.SetLogLevel(subsystem, level)
+}
+
+func (a *CommonAPI) LogAlerts(ctx context.Context) ([]alerting.Alert, error) {
+	return a.Alerting.GetAlerts(), nil
+}
+
+func (a *CommonAPI) Shutdown(ctx context.Context) error {
+	a.ShutdownChan <- struct{}{}
+	return nil
+}
+
+func (a *CommonAPI) Session(ctx context.Context) (uuid.UUID, error) {
+	return session, nil
+}
+
+func (a *CommonAPI) Closing(ctx context.Context) (<-chan struct{}, error) {
+	return make(chan struct{}), nil // relies on jsonrpc closing
 }
